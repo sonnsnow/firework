@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>26岁生日快乐</title>
+<link rel="preconnect" href="https://fonts.googleapis.cn">
+<link href="https://fonts.googleapis.cn/css2?family=ZCOOL+KuaiLe&family=Zhi+Mang+Xing&family=Ma+Shan+Zheng&family=Long+Cang&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #04050e;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: none;
+  }
+  canvas { position: fixed; inset: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<script>
+/*
+  烟花设计参考 NianBroken/Firework_Simulator (Apache-2.0)：
+  细线段拖尾、0.7px 闪光丝、菊花/圆环/垂柳/频闪/噼啪/碎花/分裂/马尾/落叶/幽灵/心形/星形等弹型。
+*/
+(function () {
+  'use strict';
+
+  var canvas = document.getElementById('stage');
+  var ctx = canvas.getContext('2d');
+  var W = 0, H = 0, DPR = 1, K = 1;
+  var FONT = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Heiti SC","Noto Sans CJK SC",sans-serif';
+  // 手写体：龙藏体（钢笔随手写风，贴近参考图的细笔手写字），回退快乐体/行楷
+  var HAND_FONT = '"Long Cang","ZCOOL KuaiLe","STXingkai","华文行楷","STKaiti","华文楷体","KaiTi","楷体","Kaiti SC",cursive';
+
+  /* ================= 基础 ================= */
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  function pick(arr) { return arr[(Math.random() * arr.length) | 0]; }
+
+  // 迪士尼/维港风：鲜艳饱和、多彩明亮
+  var COLORS = {
+    red:    '#ff2d55',
+    coral:  '#ff6b4a',
+    orange: '#ff8c1a',
+    amber:  '#ffc83d',
+    gold:   '#ffb020',
+    champagne: '#ffe9b8',
+    pink:   '#ff6fb5',
+    rose:   '#ff3d8a',
+    magenta:'#ff2bd6',
+    purple: '#b14bff',
+    lavender:'#9b6bff',
+    blue:   '#2f7bff',
+    cyan:   '#22e0ff',
+    turquoise:'#14d8c0',
+    mint:   '#3dffa0',
+    green:  '#3dff6b',
+    white:  '#ffffff'
+  };
+  var COLOR_KEYS = ['red','coral','orange','amber','gold','pink','rose','magenta','purple','lavender','blue','cyan','turquoise','mint','green','white'];
+  var TUPLE = {};
+  (function () {
+    Object.keys(COLORS).forEach(function (k) {
+      var h = COLORS[k].slice(1);
+      TUPLE[k] = [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+    });
+  })();
+  function rgbaKey(k, a) { var c = TUPLE[k]; return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+  function randomColorKey(opt) {
+    opt = opt || {};
+    var k;
+    do { k = pick(COLOR_KEYS); } while ((opt.notWhite && k === 'white') || (opt.not === k));
+    return k;
+  }
+
+  var MAX_STARS = 0, MAX_SPARKS = 0;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    K = Math.min(W, H) / 400;
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    MAX_STARS = W < 560 ? 1500 : 2600;
+    MAX_SPARKS = W < 560 ? 600 : 1000;
+    makeNightStars();
+  }
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', resize);
+
+  /* ================= 夜空星 ================= */
+  var nightStars = [];
+  function makeNightStars() {
+    nightStars = [];
+    var n = Math.round(W * H / 5200);
+    for (var i = 0; i < n; i++) {
+      nightStars.push({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.1 + 0.2, p: Math.random() * 6.28, s: rand(0.4, 1.6) });
+    }
+  }
+
+  /* ================= 细粒子：火花丝（glitter） ================= */
+  var sparks = [];
+  function addSpark(x, y, colorKey, vx, vy, life) {
+    if (sparks.length >= MAX_SPARKS) { sparks.shift(); }
+    sparks.push({ x: x, y: y, px: x, py: y, vx: vx, vy: vy, life: life, max: life, c: colorKey });
+  }
+  function updateSparks(dt) {
+    var f = Math.pow(0.16, dt); // 空气阻力
+    for (var i = sparks.length - 1; i >= 0; i--) {
+      var s = sparks[i];
+      s.life -= dt;
+      if (s.life <= 0) { sparks.splice(i, 1); continue; }
+      s.px = s.x; s.py = s.y;
+      s.vx *= f; s.vy *= f;
+      s.vy += 55 * dt;
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+    }
+  }
+
+  /* ================= 星体（烟花主粒子，细线段） ================= */
+  var stars = [];
+  // glitter 档位：间隔(秒)、初速、寿命区间
+  var GLITTER = {
+    light:    { iv: 0.055, spd: 26,  l1: 0.18, l2: 0.5 },
+    medium:   { iv: 0.09,  spd: 42,  l1: 0.35, l2: 0.85 },
+    heavy:    { iv: 0.12,  spd: 70,  l1: 0.5,  l2: 1.3 },
+    willow:   { iv: 0.075, spd: 30,  l1: 0.55, l2: 1.35 },
+    streamer: { iv: 0.16,  spd: 95,  l1: 0.3,  l2: 0.7 }
+  };
+
+  function Star(o) {
+    this.x = o.x; this.y = o.y; this.px = o.x; this.py = o.y;
+    this.vx = o.vx; this.vy = o.vy;
+    this.c = o.c;                 // 当前颜色 key
+    this.c2 = o.c2 || null;       // 变色（幽灵/频闪）
+    this.transition = o.transition || 0;
+    this.changed = false;
+    this.life = o.life; this.full = o.life;
+    this.size = o.size || 1.1;
+    this.drag = o.drag != null ? o.drag : 0.94;   // 每秒速度保持率
+    this.grav = o.grav != null ? o.grav : 62;
+    this.g = o.g || null;         // glitter 档位
+    this.gc = o.gc || this.c;     // 火花颜色
+    this.timer = rand(0, 0.12);
+    this.strobe = o.strobe || false;
+    this.strobeFreq = o.strobeFreq || 0.09;
+    this.visible = true;
+    this.death = o.death || null; // crossette | crackle | floral
+    this.head = o.head != null ? o.head : true;
+  }
+
+  function addStar(o) {
+    if (stars.length < MAX_STARS) stars.push(new Star(o));
+  }
+
+  function deathEffect(st) {
+    if (st.death === 'crossette') {
+      var a0 = Math.random() * Math.PI * 0.5;
+      for (var k = 0; k < 4; k++) {
+        var a = a0 + k * Math.PI / 2 + rand(-0.15, 0.15);
+        addStar({ x: st.x, y: st.y, vx: Math.cos(a) * rand(70, 130) * K, vy: Math.sin(a) * rand(70, 130) * K,
+          c: st.c, life: rand(0.45, 0.65), size: 0.95, drag: 0.9, grav: 60, g: 'light', gc: st.gc });
+      }
+    } else if (st.death === 'crackle') {
+      var n = 14;
+      for (var j = 0; j < n; j++) {
+        var aa = Math.random() * Math.PI * 2;
+        var sp = Math.pow(Math.random(), 0.45) * 150 * K;
+        addSpark(st.x, st.y, 'gold', Math.cos(aa) * sp, Math.sin(aa) * sp, rand(0.25, 0.55));
+      }
+    } else if (st.death === 'floral') {
+      var fn = 12;
+      addFlash(st.x, st.y, 26 * K);
+      for (var m = 0; m < fn; m++) {
+        var ab = Math.random() * Math.PI * 2;
+        var sb = rand(60, 150) * K;
+        addStar({ x: st.x, y: st.y, vx: Math.cos(ab) * sb + st.vx * 0.25, vy: Math.sin(ab) * sb + st.vy * 0.25,
+          c: randomColorKey(), life: rand(0.6, 1.0), size: 0.9, drag: 0.9, grav: 70, g: 'light', gc: 'white' });
+      }
+    }
+  }
+
+  function updateStars(dt) {
+    for (var i = stars.length - 1; i >= 0; i--) {
+      var st = stars[i];
+      st.life -= dt;
+      if (st.life <= 0) {
+        if (st.death) deathEffect(st);
+        stars.splice(i, 1);
+        continue;
+      }
+      // 变色
+      if (st.c2 && !st.changed && st.life < st.transition) {
+        st.changed = true;
+        st.c = st.c2;
+        if (st.c === '_invis') st.g = null;
+      }
+      // 频闪
+      if (st.strobe && st.life < st.full * 0.55) {
+        st.visible = Math.floor(st.life / st.strobeFreq) % 3 === 0;
+      }
+
+      st.px = st.x; st.py = st.y;
+      var f = Math.pow(st.drag, dt);
+      st.vx *= f; st.vy *= f;
+      st.vy += st.grav * dt;
+      st.x += st.vx * dt;
+      st.y += st.vy * dt;
+
+      if (st.g && st.c !== '_invis' || (st.g && st.gc !== st.c && st.c === '_invis')) {
+        st.timer -= dt;
+        while (st.timer <= 0) {
+          var gl = GLITTER[st.g];
+          st.timer += gl.iv * rand(0.6, 1.4);
+          var a = Math.random() * Math.PI * 2;
+          var sp = rand(4, gl.spd) * K;
+          addSpark(st.x, st.y, st.gc, st.vx * 0.15 + Math.cos(a) * sp, st.vy * 0.15 + Math.sin(a) * sp, rand(gl.l1, gl.l2));
+        }
+      }
+      if (st.y > H + 40) stars.splice(i, 1);
+    }
+  }
+
+  /* ================= 爆炸闪光 ================= */
+  var flashes = [];
+  function addFlash(x, y, r) { flashes.push({ x: x, y: y, r: r, life: 0.22, max: 0.22 }); }
+  function updateFlashes(dt) {
+    for (var i = flashes.length - 1; i >= 0; i--) {
+      flashes[i].life -= dt;
+      if (flashes[i].life <= 0) flashes.splice(i, 1);
+    }
+  }
+
+  /* ================= 爆炸分布算法（参考站圆盘均匀分布） ================= */
+  function distribute(count, speed, cb) {
+    var R = Math.max(1, Math.sqrt(count / Math.PI));
+    var rings = Math.max(1, Math.round(R * Math.PI * 0.5));
+    for (var i = 0; i < rings; i++) {
+      var ringSize = Math.cos((i / rings) * Math.PI * 0.5);
+      var parts = Math.max(5, Math.round(2 * Math.PI * R * ringSize));
+      var base = Math.random() * Math.PI * 2;
+      for (var j = 0; j < parts; j++) {
+        var ang = base + (j / parts) * Math.PI * 2 + rand(-0.03, 0.03);
+        var sp = speed * ringSize * rand(0.96, 1.04);
+        cb(ang, sp);
+      }
+    }
+  }
+
+  /* ================= 各类烟花弹 ================= */
+  function whiteOrGold() { return Math.random() < 0.5 ? 'gold' : 'white'; }
+
+  function shellChrys(x, y, scale) {
+    var glitter = Math.random() < 0.3 ? 'light' : null;
+    var single = Math.random() < 0.7;
+    var col = single ? randomColorKey({ notWhite: true }) : randomColorKey();
+    var col2 = single ? null : randomColorKey({ not: col });
+    var pistil = single && Math.random() < 0.45;
+    var pistilCol = pistil ? (col === 'gold' || col === 'white' ? randomColorKey({ not: col }) : whiteOrGold()) : null;
+    var speed = rand(180, 225) * K * scale;
+    var n = Math.round(rand(110, 150) * scale);
+    var load = loadFactor();
+    distribute(Math.round(n * load), speed, function (ang, sp) {
+      var useC = (!single && Math.random() < 0.5) ? col2 : col;
+      var g = glitter;
+      var gc = useC;
+      if (!glitter) { if (Math.random() < 0.18) { g = 'light'; gc = whiteOrGold(); } }
+      else { gc = whiteOrGold(); }
+      addStar({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+        c: useC, life: rand(1.3, 1.9) * scale + 0.4, size: rand(0.95, 1.25), drag: 0.945, grav: 62,
+        g: g, gc: gc });
+    });
+    if (pistil) {
+      distribute(Math.round(34 * load), speed * 0.42, function (ang, sp) {
+        addStar({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+          c: pistilCol, life: rand(1.0, 1.5), size: 0.95, drag: 0.95, grav: 55, g: 'light', gc: pistilCol });
+      });
+    }
+    addFlash(x, y, speed * 0.55);
+  }
+
+  function shellRing(x, y, scale) {
+    var col = randomColorKey();
+    var pistil = Math.random() < 0.7;
+    var speed = rand(195, 230) * K * scale;
+    var n = Math.round(64 * scale);
+    for (var i = 0; i < n; i++) {
+      var ang = (i / n) * Math.PI * 2 + rand(-0.02, 0.02);
+      var sp = speed * rand(0.97, 1.03);
+      addStar({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+        c: col, life: rand(1.4, 1.8), size: 1.05, drag: 0.95, grav: 58,
+        g: pistil ? null : 'light', gc: col === 'gold' ? 'gold' : 'white' });
+    }
+    if (pistil) {
+      var pc = (col === 'gold' || col === 'white') ? randomColorKey({ not: col }) : whiteOrGold();
+      distribute(26, speed * 0.4, function (a, s) {
+        addStar({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+          c: pc, life: rand(0.9, 1.3), size: 0.9, drag: 0.95, grav: 52 });
+      });
+    }
+    addFlash(x, y, speed * 0.5);
+  }
+
+  function shellDoubleRing(x, y, scale) {
+    var c1 = randomColorKey(), c2 = randomColorKey({ not: c1 });
+    var speed = rand(190, 225) * K * scale;
+    [0.62, 1.0].forEach(function (rr, idx) {
+      var n = Math.round(52 * scale);
+      var col = idx === 0 ? c1 : c2;
+      for (var i = 0; i < n; i++) {
+        var ang = (i / n) * Math.PI * 2 + (idx ? 0.12 : 0);
+        var sp = speed * rr * rand(0.98, 1.02);
+        addStar({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+          c: col, life: rand(1.3, 1.8), size: 1.0, drag: 0.95, grav: 58, g: 'light', gc: 'white' });
+      }
+    });
+    addFlash(x, y, speed * 0.5);
+  }
+
+  function shellWillow(x, y, scale) {
+    var speed = rand(165, 200) * K * scale;
+    var n = Math.round(64 * scale);
+    distribute(n, speed, function (ang, sp) {
+      addStar({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 30 * K,
+        c: '_invis', life: rand(2.6, 3.4), size: 1.0, drag: 0.985, grav: 105,
+        g: 'willow', gc: 'gold' });
+    });
+    addFlash(x, y, speed * 0.42);
+  }
+
+  function shellStrobe(x, y, scale) {
+    var col = randomColorKey({ notWhite: true });
+    var speed = rand(185, 220) * K * scale;
+    distribute(Math.round(95 * scale), speed, function (ang, sp) {
+      addStar({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+        c: col, c2: Math.random() < 0.5 ? 'white' : null, transition: rand(0.9, 1.2),
+        life: rand(1.6, 2.1), size: 1.05, drag: 0.945, grav: 60,
+        g: 'light', gc: 'white', strobe: true, strobeFreq: rand(0.06, 0.11) });
+    });
+    addFlash(x, y, speed * 0.5);
+  }
+
+  function shellCrackle(x, y, scale) {
+    var col = Math.random() < 0.7 ? 'gold' : randomColorKey();
+    var speed = rand(195, 240) * K * scale;
+    distribute(Math.round(120 * scale), speed, function (ang, sp) {
+      addStar({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+        c: col, life: rand(0.75, 1.05), size: 0.95, drag: 0.93, grav: 65,
+        g: 'light', gc: 'gold', death: 'crackle' });
+    });
+    if (Math.random() < 0.6) {
+      distribute(22, speed * 0.4, function (a, s) {
+        addStar({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+          c: whiteOrGold(), life: rand(0.8, 1.2), size: 0.85, drag: 0.94, grav: 55 });
+      });
+    }
+    addFlash(x, y, speed * 0.6);
+  }
+
+  function shellCrossette(x, y, scale) {
+    var col = randomColorKey({ notWhite: true });
+    var speed = rand(180, 215) * K * scale;
+    distribute(Math.round(58 * scale), speed, function (ang, sp) {
+      addStar({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+        c: col, life: rand(0.9, 1.25), size: 1.1, drag: 0.93, grav: 60,
+        death: 'crossette', gc: whiteOrGold() });
+    });
+    addFlash(x, y, speed * 0.5);
+  }
+
+  function shellFloral(x, y, scale) {
+    var n = Math.round(24 * scale);
+    var speed = rand(190, 230) * K * scale;
+    distribute(n, speed, function (ang, sp) {
+      addStar({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+        c: Math.random() < 0.7 ? pick(['red', 'gold', 'blue', 'purple', 'pink', 'cyan']) : randomColorKey(),
+        life: rand(0.7, 1.0), size: 0.9, drag: 0.92, grav: 62, death: 'floral' });
+    });
+    addFlash(x, y, speed * 0.4);
+  }
+
+  function shellHorsetail(x, y, scale) {
+    var col = randomColorKey();
+    var n = Math.round(80 * scale);
+    var up = rand(150, 200) * K * scale;
+    distribute(n, rand(90, 120) * K * scale, function (ang, sp) {
+      addStar({ x: x, y: y, vx: Math.cos(ang) * sp * 0.7, vy: Math.sin(ang) * sp * 0.7 - up,
+        c: col, life: rand(2.2, 2.8), size: 1.0, drag: 0.975, grav: 100,
+        g: 'medium', gc: Math.random() < 0.5 ? whiteOrGold() : col });
+    });
+    addFlash(x, y, 120 * K * scale);
+  }
+
+  function shellLeaves(x, y, scale) {
+    var n = Math.round(22 * scale);
+    var speed = rand(170, 210) * K * scale;
+    distribute(n, speed, function (ang, sp) {
+      addStar({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 20 * K,
+        c: '_invis', life: rand(1.7, 2.3), size: 0.9, drag: 0.97, grav: 45,
+        g: 'willow', gc: 'gold' });
+    });
+    addFlash(x, y, speed * 0.4);
+  }
+
+  function shellGhost(x, y, scale) {
+    var ghost = randomColorKey({ not: 'white' });
+    var speed = rand(185, 220) * K * scale;
+    distribute(Math.round(110 * scale), speed, function (ang, sp) {
+      var st = {
+        x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+        c: '_invis', c2: ghost, transition: rand(0.95, 1.25),
+        life: rand(2.0, 2.6), size: 1.05, drag: 0.945, grav: 62
+      };
+      if (Math.random() < 0.4) { st.g = 'streamer'; st.gc = whiteOrGold(); }
+      addStar(st);
+    });
+    addFlash(x, y, speed * 0.45);
+  }
+
+  // 心形
+  function shellHeart(x, y, scale) {
+    var col = pick(['red', 'pink', 'gold']);
+    var n = Math.round(80 * scale);
+    var speed = rand(175, 205) * K * scale;
+    for (var i = 0; i < n; i++) {
+      var t = (i / n) * Math.PI * 2;
+      var hx = 16 * Math.pow(Math.sin(t), 3);
+      var hy = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+      var mag = Math.sqrt(hx * hx + hy * hy) / 17;
+      var ang = Math.atan2(hy, hx) + rand(-0.03, 0.03);
+      var sp = speed * mag * rand(0.95, 1.05);
+      addStar({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+        c: col, life: rand(1.5, 1.9), size: 1.05, drag: 0.95, grav: 55, g: 'light', gc: 'white' });
+    }
+    addFlash(x, y, speed * 0.5);
+  }
+
+  // 五角星
+  function shellStarShape(x, y, scale) {
+    var col = pick(['gold', 'champagne', 'white']);
+    var speed = rand(82, 96) * K * scale;
+    var pts = [];
+    for (var i = 0; i < 10; i++) {
+      var a = -Math.PI / 2 + (i * Math.PI) / 5;
+      var r = (i % 2 === 0) ? 1 : 0.42;
+      pts.push({ x: Math.cos(a) * r, y: Math.sin(a) * r });
+    }
+    var per = 11;
+    for (var s2 = 0; s2 < pts.length; s2++) {
+      var p1 = pts[s2], p2 = pts[(s2 + 1) % pts.length];
+      for (var j = 0; j < per; j++) {
+        var tt = j / per;
+        var px2 = p1.x + (p2.x - p1.x) * tt;
+        var py2 = p1.y + (p2.y - p1.y) * tt;
+        var m = Math.sqrt(px2 * px2 + py2 * py2);
+        var ang = Math.atan2(py2, px2) + rand(-0.02, 0.02);
+        var sp = speed * m * rand(0.96, 1.04);
+        addStar({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+          c: col, life: rand(1.4, 1.8), size: 1.0, drag: 0.95, grav: 55,
+          g: Math.random() < 0.5 ? 'light' : null, gc: 'gold' });
+      }
+    }
+    // 内部散点星光
+    for (var k2 = 0; k2 < 16; k2++) {
+      var ia = Math.random() * Math.PI * 2;
+      var ir = rand(0.12, 0.85);
+      addStar({ x: x, y: y, vx: Math.cos(ia) * speed * ir, vy: Math.sin(ia) * speed * ir,
+        c: col, life: rand(1.2, 1.6), size: 0.95, drag: 0.95, grav: 50,
+        g: 'light', gc: 'white' });
+    }
+    addFlash(x, y, speed * 0.5);
+  }
+
+  // 五瓣花
+  function shellFlowerShape(x, y, scale) {
+    var col = pick(['pink', 'rose', 'magenta', 'coral']);
+    var speed = rand(82, 96) * K * scale;
+    var n = Math.round(96 * scale);
+    for (var i = 0; i < n; i++) {
+      var t = (i / n) * Math.PI * 2;
+      var r = 0.55 + 0.45 * Math.cos(5 * t);
+      var px2 = Math.cos(t) * r, py2 = Math.sin(t) * r;
+      var m = Math.sqrt(px2 * px2 + py2 * py2);
+      var ang = Math.atan2(py2, px2) + rand(-0.02, 0.02);
+      var sp = speed * m * rand(0.96, 1.04);
+      addStar({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+        c: col, life: rand(1.4, 1.8), size: 1.0, drag: 0.95, grav: 55,
+        g: Math.random() < 0.4 ? 'light' : null, gc: 'white' });
+    }
+    // 花心散点
+    for (var k3 = 0; k3 < 14; k3++) {
+      var ia2 = Math.random() * Math.PI * 2;
+      var ir2 = rand(0.1, 0.48);
+      addStar({ x: x, y: y, vx: Math.cos(ia2) * speed * ir2, vy: Math.sin(ia2) * speed * ir2,
+        c: col, life: rand(1.2, 1.6), size: 0.95, drag: 0.95, grav: 50,
+        g: 'light', gc: 'gold' });
+    }
+    addFlash(x, y, speed * 0.5);
+  }
+
+  var SHELL_TYPES = [
+    [shellChrys, 24], [shellRing, 8], [shellDoubleRing, 4], [shellWillow, 10],
+    [shellStrobe, 8], [shellCrackle, 9], [shellCrossette, 7], [shellFloral, 8],
+    [shellHorsetail, 8], [shellLeaves, 7], [shellGhost, 7],
+    [shellStarShape, 3], [shellFlowerShape, 3]
+  ];
+  var SHELL_TOTAL = 0;
+  SHELL_TYPES.forEach(function (t) { SHELL_TOTAL += t[1]; });
+  function randomShell() {
+    var r = Math.random() * SHELL_TOTAL;
+    for (var i = 0; i < SHELL_TYPES.length; i++) {
+      r -= SHELL_TYPES[i][1];
+      if (r <= 0) return SHELL_TYPES[i][0];
+    }
+    return shellChrys;
+  }
+  function loadFactor() {
+    return Math.max(0.35, Math.min(1, 1.5 - stars.length / MAX_STARS));
+  }
+
+  /* ================= 升空弹 ================= */
+  var rockets = [];
+  function Rocket(tx, ty, type, scale, payload) {
+    this.tx = tx; this.ty = ty;
+    this.x = tx + rand(-24, 24); this.y = H + 8;
+    this.vx = ((this.tx - this.x) / Math.max(H, 400)) * rand(110, 150);
+    this.vy = -Math.sqrt(2 * 300 * (this.y - ty)); // 反推初速度
+    this.type = type; this.scale = scale || 1;
+    this.payload = payload || null;
+    this.c = Math.random() < 0.6 ? 'gold' : 'white';
+    this.timer = 0;
+    this.dead = false;
+  }
+  Rocket.prototype.update = function (dt) {
+    this.vy += 300 * dt;
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    // 上升火花丝
+    this.timer -= dt;
+    while (this.timer <= 0) {
+      this.timer += 0.028;
+      var a = Math.PI / 2 + rand(-0.5, 0.5);
+      addSpark(this.x, this.y + 2, this.c, Math.cos(a) * rand(8, 34) * K + this.vx * 0.05,
+        Math.sin(a) * rand(8, 34) * K + 40, rand(0.25, 0.55));
+    }
+    if (this.vy >= -30 || this.y <= this.ty) {
+      this.dead = true;
+      if (this.payload === 'word') burstWord(this.x, this.ty);
+      else if (this.payload === 'cake') burstCake(this.x, this.ty);
+      else this.type(this.x, this.ty, this.scale);
+    }
+  };
+
+  function launch(tx, ty, scale, type, payload) {
+    rockets.push(new Rocket(tx, ty, type || randomShell(), scale == null ? 1 : scale, payload || null));
+  }
+
+  /* ========== 形状烟花：粒子从爆炸点散开再汇聚成图形（文字 / 蛋糕） ========== */
+  var wordParts = [];
+
+  function emitShapeParts(pts, ox, oy, colorFn, hold, sparkChance) {
+    var sc = sparkChance == null ? 1 : sparkChance;
+    for (var i = 0; i < pts.length; i++) {
+      var p = pts[i];
+      var a = Math.random() * Math.PI * 2;
+      var sp = rand(120, 340) * K;
+      wordParts.push({
+        x: ox, y: oy, px: ox, py: oy,
+        tx: p.x + rand(-0.8, 0.8), ty: p.y + rand(-0.8, 0.8),
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        c: colorFn(p),
+        age: 0, state: 0, timer: rand(0, 0.1),
+        life: rand(1.4, 2.0), fl: Math.random() * 6.28,
+        hold: hold || 2.8,
+        spk: Math.random() < sc ? 1 : 0
+      });
+    }
+  }
+
+  /* ---------- 文字「生日快乐」：手写毛笔体，屏幕中央闪现 ---------- */
+  function burstWord(x, y) {
+    var chars = ['生', '日', '快', '乐'];
+    var fontSize = Math.min(60, W * 0.13);
+    var pts = sampleWordPoints(chars, fontSize, x, y, 3);
+    var guard = 0;
+    while (pts.length > 520 && guard < 3) {
+      pts = sampleWordPoints(chars, fontSize, x, y, 4 + guard);
+      guard++;
+    }
+    var main = Math.random() < 0.55 ? 'gold' : randomColorKey({ notWhite: true });
+    var alt = randomColorKey({ not: main });
+    // 仿参考图：文字周围点缀几颗小星星（✦）
+    var tw = fontSize;
+    for (var sp = 0; sp < 6; sp++) {
+      var sxp = x + rand(-(tw * 2.9), tw * 2.9);
+      var syp = y + rand(-tw * 0.85, tw * 0.85);
+      var arm = rand(4, 7) * K;
+      var sc = Math.random() < 0.5 ? 'white' : 'champagne';
+      pts.push({ x: sxp, y: syp, c: sc });
+      pts.push({ x: sxp - arm, y: syp, c: sc });
+      pts.push({ x: sxp + arm, y: syp, c: sc });
+      pts.push({ x: sxp, y: syp - arm, c: sc });
+      pts.push({ x: sxp, y: syp + arm, c: sc });
+    }
+    emitShapeParts(pts, x, y, function () { return Math.random() < 0.65 ? main : alt; }, 2.8);
+    addFlash(x, y, 200 * K);
+  }
+
+  function sampleWordPoints(chars, fontSize, cx, cy, gap) {
+    var pad = 10;
+    var charGap = fontSize * 0.3;
+    var measure = document.createElement('canvas').getContext('2d');
+    measure.font = fontSize + 'px ' + HAND_FONT;
+    var widths = chars.map(function (c) { return measure.measureText(c).width; });
+    var total = widths.reduce(function (a, b) { return a + b; }, 0) + charGap * (chars.length - 1);
+
+    var cw = Math.ceil(total + pad * 2);
+    var ch = Math.ceil(fontSize * 1.34 + pad * 2);
+    var off = document.createElement('canvas');
+    off.width = cw; off.height = ch;
+    var o = off.getContext('2d');
+    o.font = fontSize + 'px ' + HAND_FONT;
+    o.textAlign = 'center';
+    o.textBaseline = 'middle';
+    o.fillStyle = '#fff';
+
+    var acc = -total / 2;
+    for (var i = 0; i < chars.length; i++) {
+      var wx = acc + widths[i] / 2;
+      acc += widths[i] + charGap;
+      // 逐字轻微上下摆动 + 小角度倾斜，模仿手写字的跳动
+      var px = cw / 2 + wx;
+      var py = ch / 2 + fontSize * 0.02 + rand(-fontSize * 0.04, fontSize * 0.04);
+      o.save();
+      o.translate(px, py);
+      o.rotate(rand(-0.04, 0.04));
+      o.fillText(chars[i], 0, 0);
+      o.lineWidth = 2.2;
+      o.lineJoin = 'round';
+      o.strokeStyle = '#fff';
+      o.strokeText(chars[i], 0, 0);
+      o.restore();
+    }
+
+    var data = o.getImageData(0, 0, cw, ch).data;
+    var pts = [];
+    for (var yy = 0; yy < ch; yy += gap) {
+      for (var xx = 0; xx < cw; xx += gap) {
+        if (data[(yy * cw + xx) * 4 + 3] > 128) {
+          pts.push({ x: cx + (xx - cw / 2), y: cy + (yy - ch / 2) });
+        }
+      }
+    }
+    return pts;
+  }
+
+  /* ---------- 小蛋糕：金色线描双层蛋糕 + 蜡烛 + 暖白火焰 ---------- */
+  function roundRectPath(c, x, y, w, h, r) {
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  }
+  function creamWave(c, x, y, w, amp, count) {
+    var seg = w / count;
+    c.beginPath();
+    c.moveTo(x, y);
+    for (var i = 0; i < count; i++) {
+      c.quadraticCurveTo(x + seg * (i + 0.5), y + amp, x + seg * (i + 1), y);
+    }
+    c.stroke();
+  }
+
+  function drawCakeA(g, w, p) {
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    g.strokeStyle = '#fff';
+    g.lineWidth = 5;
+
+    // 托盘
+    g.beginPath();
+    g.ellipse(160, 346, 96, 13, 0, 0, Math.PI * 2);
+    g.stroke();
+    g.beginPath();
+    g.moveTo(76, 346); g.lineTo(68, 360);
+    g.moveTo(244, 346); g.lineTo(252, 360);
+    g.stroke();
+
+    // 下层蛋糕
+    roundRectPath(g, 90, 240, 140, 100, 12);
+    g.stroke();
+    creamWave(g, 90, 240, 140, 17, 4);
+
+    // 上层蛋糕
+    roundRectPath(g, 114, 176, 92, 64, 10);
+    g.stroke();
+    creamWave(g, 114, 176, 92, 15, 3);
+
+    // 垂下的奶油
+    g.lineWidth = 3.5;
+    g.beginPath();
+    g.moveTo(118, 244); g.quadraticCurveTo(112, 262, 120, 274);
+    g.moveTo(204, 244); g.quadraticCurveTo(210, 260, 202, 270);
+    g.moveTo(140, 332); g.quadraticCurveTo(136, 322, 142, 314);
+    g.stroke();
+
+    // 蜡烛
+    g.lineWidth = 4.5;
+    roundRectPath(g, 152, 122, 16, 54, 4);
+    g.stroke();
+    g.beginPath();
+    g.moveTo(160, 122); g.lineTo(160, 112);
+    g.stroke();
+
+    // 火焰外圈（金线）
+    g.lineWidth = 3;
+    g.beginPath();
+    g.moveTo(160, 86);
+    g.bezierCurveTo(146, 100, 150, 112, 160, 112);
+    g.bezierCurveTo(173, 112, 176, 99, 160, 86);
+    g.stroke();
+
+    // 蜡烛粉色条纹
+    p.lineCap = 'round';
+    p.strokeStyle = '#fff';
+    p.lineWidth = 4;
+    p.beginPath();
+    p.moveTo(152, 142); p.quadraticCurveTo(160, 149, 168, 142);
+    p.moveTo(152, 159); p.quadraticCurveTo(160, 166, 168, 159);
+    p.stroke();
+
+    // 粉色装饰糖珠
+    p.fillStyle = '#fff';
+    [[122, 296, 5], [160, 305, 5], [198, 296, 5], [133, 214, 4.5], [187, 214, 4.5]].forEach(function (d) {
+      p.beginPath();
+      p.arc(d[0], d[1], d[2], 0, Math.PI * 2);
+      p.fill();
+    });
+
+    // 暖白火焰
+    w.fillStyle = '#fff';
+    w.beginPath();
+    w.moveTo(160, 90);
+    w.bezierCurveTo(149, 102, 152, 111, 160, 111);
+    w.bezierCurveTo(171, 111, 173, 101, 160, 90);
+    w.closePath();
+    w.fill();
+  }
+
+  // 杯子蛋糕 + 圆形蛋糕两种样式已按需求移除，只保留原来的双层蛋糕
+
+  function makeLayer(w0, h0) {
+    var c = document.createElement('canvas');
+    c.width = w0; c.height = h0;
+    return { canvas: c, ctx: c.getContext('2d') };
+  }
+  function collectLayer(layer, cw0, ch0, gap, colorKey, ox, oy, sx, sy, out) {
+    var data = layer.ctx.getImageData(0, 0, cw0, ch0).data;
+    for (var yy = 0; yy < ch0; yy += gap) {
+      for (var xx = 0; xx < cw0; xx += gap) {
+        if (data[(yy * cw0 + xx) * 4 + 3] > 128) {
+          out.push({ x: ox + (xx - cw0 / 2) * sx, y: oy + (yy - ch0 * 0.56) * sy, c: colorKey });
+        }
+      }
+    }
+  }
+
+  function burstCake(x, y) {
+    var CW = 320, CH = 400;
+    var gold = makeLayer(CW, CH), white = makeLayer(CW, CH), pink = makeLayer(CW, CH);
+    drawCakeA(gold.ctx, white.ctx, pink.ctx);
+
+    // 图形真实留白区缩放（宽184、高274）
+    var s = Math.min(W * 0.36 / 184, H * 0.42 / 274);
+    var sx = s, sy = s;
+    var pts = [];
+    collectLayer(gold, CW, CH, 3, 'gold', x, y, sx, sy, pts);
+    if (pts.length > 1300) {
+      pts = [];
+      collectLayer(gold, CW, CH, 4, 'gold', x, y, sx, sy, pts);
+    }
+    collectLayer(white, CW, CH, 2, 'white', x, y, sx, sy, pts);
+    collectLayer(pink, CW, CH, 2, 'pink', x, y, sx, sy, pts);
+
+    emitShapeParts(pts, x, y, function (p) { return p.c; }, 3.8, 0.08);
+    addFlash(x, y, 130 * K);
+  }
+
+  function updateWordParts(dt) {
+    for (var i = wordParts.length - 1; i >= 0; i--) {
+      var p = wordParts[i];
+      p.age += dt;
+      p.px = p.x; p.py = p.y;
+      p.fl += 4 * dt;
+      if (p.state === 0) {
+        // 弹簧汇聚
+        var k = 42, d = 8.5;
+        p.vx += ((p.tx - p.x) * k - p.vx * d) * dt;
+        p.vy += ((p.ty - p.y) * k - p.vy * d) * dt;
+        p.x += p.vx * dt; p.y += p.vy * dt;
+        if (p.age > 0.9) p.state = 1;
+      } else if (p.state === 1) {
+        // 悬停闪烁 + 洒火星
+        var hx = p.tx + Math.sin(p.fl) * 0.8;
+        var hy = p.ty + Math.cos(p.fl * 0.9) * 0.8;
+        p.vx += ((hx - p.x) * 30 - p.vx * 7) * dt;
+        p.vy += ((hy - p.y) * 30 - p.vy * 7) * dt;
+        p.x += p.vx * dt; p.y += p.vy * dt;
+        if (p.spk) {
+          p.timer -= dt;
+          if (p.timer <= 0) {
+            p.timer = rand(0.1, 0.28);
+            addSpark(p.x, p.y, Math.random() < 0.7 ? 'gold' : 'white',
+              rand(-14, 14) * K, rand(-40, -8) * K, rand(0.3, 0.7));
+          }
+        }
+        if (p.age > (p.hold || 2.8)) p.state = 2;
+      } else {
+        // 散开下坠
+        p.vx *= Math.pow(0.97, dt);
+        p.vy = p.vy * Math.pow(0.97, dt) + 70 * dt;
+        p.x += p.vx * dt; p.y += p.vy * dt;
+        p.life -= dt;
+        if (p.life <= 0 || p.y > H + 20) { wordParts.splice(i, 1); continue; }
+      }
+    }
+  }
+
+  /* ================= 中央金字：26岁 / 生日快乐 ================= */
+  var GOLDS = [
+    [255, 252, 240],
+    [255, 240, 205],
+    [255, 215, 130],
+    [255, 182, 74],
+    [235, 150, 48]
+  ];
+  var dots = [];
+  var haloCanvas = null;
+  var textBounds = { l: 0, t: 0, r: 0, b: 0 };
+  var reBurstTimer = 0;
+  var S1 = 0;
+
+  function buildCenterText() {
+    dots = [];
+    S1 = Math.min(W * 0.40, H * 0.21);
+    var S2 = S1 * 0.52;
+    var cy1 = H * 0.385;
+    var cy2 = cy1 + S1 * 0.80;
+
+    var off = document.createElement('canvas');
+    off.width = W; off.height = H;
+    var o = off.getContext('2d');
+    o.textAlign = 'center';
+    o.textBaseline = 'middle';
+    o.fillStyle = '#fff';
+    o.font = '900 ' + S1 + 'px ' + FONT;
+    o.fillText('26岁', W / 2, cy1);
+    o.font = '900 ' + S2 + 'px ' + FONT;
+    o.fillText('生日快乐', W / 2, cy2);
+
+    // 柔光底（预渲染）
+    haloCanvas = document.createElement('canvas');
+    haloCanvas.width = W; haloCanvas.height = H;
+    var hc = haloCanvas.getContext('2d');
+    hc.textAlign = 'center'; hc.textBaseline = 'middle';
+    hc.shadowColor = 'rgba(255,180,80,0.95)';
+    hc.shadowBlur = S1 * 0.16;
+    hc.fillStyle = 'rgba(255,196,105,0.5)';
+    hc.font = '900 ' + S1 + 'px ' + FONT;
+    hc.fillText('26岁', W / 2, cy1);
+    hc.font = '900 ' + S2 + 'px ' + FONT;
+    hc.fillText('生日快乐', W / 2, cy2);
+
+    var data = o.getImageData(0, 0, W, H).data;
+    var gap = 3;
+    var pts = [];
+    var minX = W, maxX = 0, minY = H, maxY = 0;
+    function scan(g) {
+      pts = []; minX = W; maxX = 0; minY = H; maxY = 0;
+      for (var y = 0; y < H; y += g) {
+        for (var x = 0; x < W; x += g) {
+          if (data[(y * W + x) * 4 + 3] > 128) {
+            pts.push({ x: x, y: y });
+            if (x < minX) minX = x; if (x > maxX) maxX = x;
+            if (y < minY) minY = y; if (y > maxY) maxY = y;
+          }
+        }
+      }
+    }
+    scan(gap);
+    while (pts.length > 2200 && gap < 6) { gap++; scan(gap); }
+
+    for (var i = 0; i < pts.length; i++) {
+      var pt = pts[i];
+      var a = Math.random() * Math.PI * 2;
+      var s = rand(150, 600);
+      dots.push({
+        hx: pt.x + rand(-0.7, 0.7), hy: pt.y + rand(-0.7, 0.7),
+        x: W / 2 + rand(-22, 22), y: (cy1 + cy2) / 2 + rand(-16, 16),
+        vx: Math.cos(a) * s, vy: Math.sin(a) * s - 110,
+        jr: rand(0.4, 1.5), jp: Math.random() * 6.28, js: rand(0.5, 1.5),
+        sz: rand(0.6, 1.4), fl: Math.random() * 6.28, fs: rand(2, 5),
+        ci: pickDotColorIndex(), timer: rand(0.2, 1.2)
+      });
+    }
+    textBounds = { l: minX - 22, t: minY - 20, r: maxX + 22, b: maxY + 24 };
+    reBurstTimer = rand(11, 15);
+  }
+  function pickDotColorIndex() {
+    var r = Math.random();
+    return r < 0.22 ? 0 : r < 0.5 ? 1 : r < 0.75 ? 2 : r < 0.93 ? 3 : 4;
+  }
+  function burstCenterText() {
+    var cx = W / 2, cy = H * 0.44;
+    for (var i = 0; i < dots.length; i++) {
+      var d = dots[i];
+      d.vx += (d.hx - cx) * 1.4 + rand(-80, 80);
+      d.vy += (d.hy - cy) * 1.2 - rand(80, 220);
+    }
+  }
+  function updateDots(dt, t) {
+    for (var i = 0; i < dots.length; i++) {
+      var d = dots[i];
+      var hx = d.hx + Math.sin(t * d.js + d.jp) * d.jr;
+      var hy = d.hy + Math.cos(t * d.js * 0.9 + d.jp) * d.jr;
+      d.vx += ((hx - d.x) * 30 - d.vx * 7.5) * dt;
+      d.vy += ((hy - d.y) * 30 - d.vy * 7.5) * dt;
+      d.x += d.vx * dt; d.y += d.vy * dt;
+      d.fl += d.fs * dt;
+      d.timer -= dt;
+      if (d.timer <= 0) {
+        d.timer = rand(0.25, 1.1);
+        addSpark(d.hx, d.hy, Math.random() < 0.65 ? 'gold' : 'champagne',
+          rand(-10, 10) * K, rand(-34, -8) * K, rand(0.4, 0.95));
+      }
+    }
+  }
+
+  var ALPHA_STEPS = 5;
+  var dotBuckets = new Array(GOLDS.length * ALPHA_STEPS);
+  function drawDots(t) {
+    if (haloCanvas) {
+      ctx.globalAlpha = 0.12 + 0.03 * Math.sin(t * 1.3);
+      ctx.drawImage(haloCanvas, 0, 0, W, H);
+      ctx.globalAlpha = 1;
+    }
+    for (var i = 0; i < dotBuckets.length; i++) {
+      dotBuckets[i] = dotBuckets[i] || [];
+      dotBuckets[i].length = 0;
+    }
+    for (var j = 0; j < dots.length; j++) {
+      var d = dots[j];
+      var a = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(d.fl));
+      var bi = d.ci * ALPHA_STEPS + Math.min(ALPHA_STEPS - 1, (a * ALPHA_STEPS) | 0);
+      dotBuckets[bi].push(d);
+    }
+    for (var bi = 0; bi < dotBuckets.length; bi++) {
+      var list = dotBuckets[bi];
+      if (!list.length) continue;
+      var ci = (bi / ALPHA_STEPS) | 0;
+      var ai = bi % ALPHA_STEPS;
+      ctx.fillStyle = 'rgba(' + GOLDS[ci][0] + ',' + GOLDS[ci][1] + ',' + GOLDS[ci][2] + ',' + ((ai + 0.5) / ALPHA_STEPS) + ')';
+      ctx.beginPath();
+      for (var q = 0; q < list.length; q++) {
+        var p = list[q];
+        var r = p.sz * (0.85 + ai / ALPHA_STEPS * 0.35);
+        ctx.moveTo(p.x + r, p.y);
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      }
+      ctx.fill();
+    }
+  }
+
+  /* ================= 位置调度（避开中央文字） ================= */
+  function inTextZone(x, y, pad) {
+    return x > textBounds.l - pad && x < textBounds.r + pad &&
+           y > textBounds.t - pad && y < textBounds.b + pad;
+  }
+  function safeBurstPos(edge) {
+    var x, y, tries = 0;
+    do {
+      var band = Math.random();
+      if (band < 0.42) {            // 顶部带
+        x = rand(W * 0.08, W * 0.92);
+        y = rand(H * 0.06, H * 0.20);
+      } else if (band < 0.72) {     // 两侧
+        x = Math.random() < 0.5 ? rand(W * 0.03, W * 0.20) : rand(W * 0.80, W * 0.97);
+        y = rand(H * 0.14, H * 0.55);
+      } else {                      // 底部带
+        x = rand(W * 0.06, W * 0.94);
+        y = rand(H * 0.68, H * 0.88);
+      }
+      tries++;
+    } while (inTextZone(x, y, 30) && tries < 12);
+    return { x: x, y: y };
+  }
+
+  function fireOne(scale, type) {
+    var p = safeBurstPos();
+    launch(p.x, p.y, scale == null ? rand(0.85, 1.15) : scale, type);
+  }
+  function fireDouble() {
+    var p1 = safeBurstPos(), p2 = safeBurstPos();
+    var t = randomShell();
+    launch(p1.x, p1.y, rand(0.85, 1.1), t);
+    setTimeout(function () { launch(p2.x, p2.y, rand(0.85, 1.1), Math.random() < 0.5 ? t : randomShell()); }, rand(180, 380));
+  }
+  function fireTriple() {
+    var t = randomShell();
+    var pm = safeBurstPos();
+    launch(pm.x, Math.min(pm.y, H * 0.2), 1.15, t);
+    setTimeout(function () { var p = safeBurstPos(); launch(W * 0.18, rand(H * 0.12, H * 0.26), 0.8, randomShell()); }, rand(700, 1000));
+    setTimeout(function () { launch(W * 0.82, rand(H * 0.12, H * 0.26), 0.8, randomShell()); }, rand(900, 1300));
+  }
+  function fireBarrage() {
+    var n = 5;
+    for (var i = 0; i < n; i++) {
+      (function (idx) {
+        setTimeout(function () {
+          var x = W * (0.14 + 0.72 * idx / (n - 1));
+          var y = H * (0.12 + 0.1 * Math.abs(Math.sin(idx)));
+          if (!inTextZone(x, y, 20)) launch(x, y, 0.7, randomShell());
+          else fireOne(0.7);
+        }, idx * 210);
+      })(i);
+    }
+  }
+
+  var wordDone = false;
+  function scheduleWord() {
+    if (wordDone) return; // 全程只出现一次
+    wordDone = true;
+    var tx = W / 2;
+    var ty = H * 0.46;
+    launch(tx, ty, 1, null, 'word');
+  }
+
+  function scheduleCake() {
+    // 顶部两侧绽放，避免挡住中央「生日快乐」
+    var cx = (Math.random() < 0.5 ? W * 0.22 : W * 0.78) + rand(-W * 0.02, W * 0.02);
+    launch(cx, H * 0.18, 1, null, 'cake');
+  }
+
+  /* ================= 交互 ================= */
+  function onTap(cx, cy) {
+    var ty = cy;
+    if (inTextZone(cx, cy, 10)) ty = H * 0.14;
+    var roll = Math.random();
+    if (roll < 0.18) {
+      var ckx = cx, cky = cy;
+      if (inTextZone(cx, cy, 10)) { ckx = (Math.random() < 0.5 ? W * 0.22 : W * 0.78); cky = H * 0.18; }
+      launch(ckx, cky, 1, null, 'cake');
+    } else {
+      launch(cx, ty, rand(0.9, 1.2), randomShell());
+    }
+  }
+  canvas.addEventListener('touchstart', function (e) {
+    e.preventDefault();
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      onTap(e.changedTouches[i].clientX, e.changedTouches[i].clientY);
+    }
+  }, { passive: false });
+  canvas.addEventListener('mousedown', function (e) { onTap(e.clientX, e.clientY); });
+  document.addEventListener('WeixinJSBridgeReady', function () {}, false);
+
+  /* ================= 渲染 ================= */
+  function strokeSegments(list, width, alpha, useColorProp) {
+    // 按颜色合批
+    var batches = {};
+    var heads = [];
+    for (var i = 0; i < list.length; i++) {
+      var st = list[i];
+      if (st.visible === false || st.c === '_invis') continue;
+      (batches[st.c] = batches[st.c] || []).push(st);
+      if (st.head !== false) heads.push(st);
+    }
+    Object.keys(batches).forEach(function (ck) {
+      var arr = batches[ck];
+      ctx.strokeStyle = COLORS[ck] || '#fff';
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      for (var j = 0; j < arr.length; j++) {
+        var s = arr[j];
+        ctx.moveTo(s.px, s.py);
+        ctx.lineTo(s.x, s.y);
+      }
+      ctx.stroke();
+    });
+    if (heads.length) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = Math.max(0.7, width * 0.7);
+      ctx.beginPath();
+      for (var h = 0; h < heads.length; h++) {
+        var s2 = heads[h];
+        ctx.moveTo(s2.x, s2.y);
+        ctx.lineTo(s2.x - s2.vx * 0.014, s2.y - s2.vy * 0.014);
+      }
+      ctx.stroke();
+    }
+  }
+
+  function render(t) {
+    // 火花丝（最细 0.7px）
+    var sBatches = {};
+    for (var i = 0; i < sparks.length; i++) {
+      var s = sparks[i];
+      var a = Math.max(0, s.life / s.max);
+      var key = s.c + '|' + ((a * 4) | 0);
+      (sBatches[key] = sBatches[key] || { c: s.c, a: a, arr: [] }).arr.push(s);
+    }
+    Object.keys(sBatches).forEach(function (key) {
+      var b = sBatches[key];
+      ctx.strokeStyle = rgbaKey(b.c, Math.max(0.15, b.a * 0.9));
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      for (var j = 0; j < b.arr.length; j++) {
+        var sp = b.arr[j];
+        ctx.moveTo(sp.px, sp.py);
+        ctx.lineTo(sp.x, sp.y);
+      }
+      ctx.stroke();
+    });
+
+    // 爆炸闪光
+    for (var f = 0; f < flashes.length; f++) {
+      var fl = flashes[f];
+      var ft = fl.life / fl.max;
+      var r = fl.r * (1.25 - ft * 0.25);
+      var grad = ctx.createRadialGradient(fl.x, fl.y, 0, fl.x, fl.y, r);
+      grad.addColorStop(0.02, 'rgba(255,255,255,' + ft + ')');
+      grad.addColorStop(0.13, 'rgba(255,170,40,' + (ft * 0.22) + ')');
+      grad.addColorStop(0.4, 'rgba(255,140,30,' + (ft * 0.08) + ')');
+      grad.addColorStop(1, 'rgba(255,120,20,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(fl.x, fl.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 升空弹
+    for (var r2 = 0; r2 < rockets.length; r2++) {
+      var rk = rockets[r2];
+      ctx.strokeStyle = COLORS[rk.c];
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(rk.x - rk.vx * 0.03, rk.y - rk.vy * 0.03);
+      ctx.lineTo(rk.x, rk.y);
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(rk.x, rk.y, 1.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 烟花星体
+    strokeSegments(stars, 1.1, 1);
+
+    // 天上的文字粒子
+    var wBatches = {};
+    for (var w = 0; w < wordParts.length; w++) {
+      var p = wordParts[w];
+      var wa = p.state === 2 ? Math.max(0, p.life / 2) : (0.55 + 0.45 * Math.sin(p.fl));
+      var wk = p.c + '|' + ((wa * 4) | 0);
+      (wBatches[wk] = wBatches[wk] || { c: p.c, a: wa, arr: [] }).arr.push(p);
+    }
+    Object.keys(wBatches).forEach(function (key) {
+      var b = wBatches[key];
+      ctx.strokeStyle = rgbaKey(b.c, Math.max(0.1, b.a));
+      ctx.lineWidth = 1.0;
+      ctx.beginPath();
+      for (var j = 0; j < b.arr.length; j++) {
+        var pp = b.arr[j];
+        ctx.moveTo(pp.px, pp.py);
+        ctx.lineTo(pp.x, pp.y);
+      }
+      ctx.stroke();
+    });
+
+    // 中央金色文字（已禁用常驻文字）
+  }
+
+  /* ================= 主循环 ================= */
+  var last = performance.now();
+  var autoTimer = 1.2;
+
+  function frame(now) {
+    var dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    var t = now / 1000;
+
+    // 余晖覆盖（参考站拖尾层做法）
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(4,5,14,0.14)';
+    ctx.fillRect(0, 0, W, H);
+
+    // 夜空星（加性叠加，与余晖达到动态平衡）
+    for (var i = 0; i < nightStars.length; i++) {
+      var ns = nightStars[i];
+      ns.p += ns.s * dt;
+      ctx.fillStyle = 'rgba(210,225,255,' + (0.05 + 0.12 * (0.5 + 0.5 * Math.sin(ns.p))) + ')';
+      ctx.beginPath();
+      ctx.arc(ns.x, ns.y, ns.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+
+    // 自动燃放调度
+    autoTimer -= dt;
+    if (autoTimer <= 0) {
+      var r = Math.random();
+      if (r < 0.52) fireOne();
+      else if (r < 0.70) fireDouble();
+      else if (r < 0.82) fireTriple();
+      else fireBarrage();
+      autoTimer = rand(0.85, 1.7);
+    }
+
+    // 「生日快乐」只在开场自动放一次（见 fireWordOnce）
+
+    // 中央文字周期性重聚（已禁用常驻文字）
+
+    for (var k = rockets.length - 1; k >= 0; k--) {
+      rockets[k].update(dt);
+      if (rockets[k].dead) rockets.splice(k, 1);
+    }
+    updateStars(dt);
+    updateSparks(dt);
+    updateWordParts(dt);
+    updateFlashes(dt);
+
+    render(t);
+
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(frame);
+  }
+
+  resize();
+  ctx.setLineCap && (ctx.lineCap = 'round');
+  // 手写字体加载完成后，尽早放一次「生日快乐」（全程仅此一次，scheduleWord 内部有保护）
+  if (document.fonts && document.fonts.load) {
+    var fireWordOnce = function () { setTimeout(scheduleWord, 500); };
+    document.fonts.load('60px "Long Cang"', '生日快乐').then(fireWordOnce, fireWordOnce);
+    setTimeout(fireWordOnce, 1800);
+  }
+  // 开场
+  setTimeout(function () { launch(W * 0.28, H * 0.2, 1.1, shellStarShape); }, 500);
+  setTimeout(function () { launch(W * 0.72, H * 0.16, 1.0, shellChrys); }, 950);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
